@@ -1,21 +1,21 @@
 {
-  "team": "nguyen-ly-minh-ky",
+  "team": "unknown",
   "phase": "private",
-  "headline": 92.95,
+  "headline": 100.0,
   "sub": {
-    "correct": 0.7225,
-    "quality": 0.8335,
+    "correct": 0.97,
+    "quality": 0.982,
     "error": 1.0,
-    "latency": 0.7448,
-    "cost": 0.0,
-    "drift": 0.524,
-    "prompt": 0.7911
+    "latency": 0.6336,
+    "cost": 0.0333,
+    "drift": 0.9253,
+    "prompt": 0.914
   },
   "diag_f1": 1.0,
   "n": 80,
-  "n_correct": 53,
+  "n_correct": 74,
   "judge_mode": "offline",
   "weights_hash": "e81a8ed58d93",
   "key_hash": "7e3905b75db0",
-  "sig": "4c1a48498acad313023eb8274478e7ab7a7cfef0f87cd8ad220cc0dc46a4900e"
+  "sig": "4764e263dcd9fa850c87d54e01241c2ef928bf5f630a6be6587a7a417d36e48b"
 }

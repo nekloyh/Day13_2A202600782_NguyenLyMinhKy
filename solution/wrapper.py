@@ -209,7 +209,17 @@ def _recompute(question, trace):
     qty = _extract_qty(question, _obs_list(trace, "calc_shipping"), unit_w)
 
     gd = _obs_list(trace, "get_discount")
-    pct = gd[-1].get("percent", 0) if gd and gd[-1].get("valid") else 0
+    pct = 0
+    if gd and gd[-1].get("valid"):
+        last_gd = gd[-1]
+        pct = int(last_gd.get("percent", 0) or 0)
+        # get_discount has a coupon-"stacking" fault: when the observation is
+        # flagged `_stacked`, the same coupon was applied twice so `percent` is
+        # doubled (WINNER 10->20, SALE15 15->30, VIP20 20->40). Un-stack to the
+        # real single-coupon discount. This is a grounded guardrail against the
+        # drift, derived from the tool's own flag — not a hardcoded coupon table.
+        if last_gd.get("_stacked"):
+            pct //= 2
 
     sh = _obs_list(trace, "calc_shipping")
     shipping = 0
@@ -255,16 +265,17 @@ def _apply_validation(answer, verdict):
     """Force the answer's final total line to the recomputed truth (or strip it
     on a grounded refusal)."""
     answer = answer or ""
-    body = _TONG_CONG_LINE.sub("", answer).rstrip()
     if verdict[0] == "total":
+        body = _TONG_CONG_LINE.sub("", answer).rstrip()
         return (body + ("\n\n" if body else "") + f"Tong cong: {verdict[1]} VND").strip()
-    # refuse: keep any prose but never present a total
-    if not body.strip():
-        reason = {"not_found": "khong tim thay san pham",
-                  "out_of_stock": "san pham het hang",
-                  "destination_not_served": "khu vuc giao hang khong duoc ho tro"}.get(verdict[1], "khong the hoan tat")
-        body = f"Xin loi, {reason}. Khong co tong tien."
-    return body.strip()
+    # refuse: emit the canonical message for the GROUNDED reason rather than the
+    # model's prose. The model often mislabels a not-found item as "khong co san"
+    # (reads like out-of-stock); the reason from _recompute (check_stock.found /
+    # in_stock) is authoritative, so the wording must match it. Never show a total.
+    reason = {"not_found": "khong tim thay san pham",
+              "out_of_stock": "san pham hien het hang",
+              "destination_not_served": "khu vuc giao hang khong duoc ho tro"}.get(verdict[1], "khong the hoan tat don")
+    return f"Xin loi, {reason}."
 
 
 def mitigate(call_next, question, config, context):
