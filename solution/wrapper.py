@@ -90,6 +90,7 @@ _SYSTEM_PROMPT: str | None = (
 # Fallback cache + lock when the binary doesn't provide them in context
 _FALLBACK_CACHE: dict = {}
 _FALLBACK_LOCK = threading.Lock()
+_DUMP_LOCK = threading.Lock()  # serializes the env-gated offline-eval trace dump
 
 # Match GHI CHÚ / GHI CHU note blocks
 _NOTE_BLOCK = re.compile(
@@ -137,7 +138,8 @@ except Exception:  # frozen runtime missing unicodedata: handle the common đ at
         return s.replace("đ", "d").replace("Đ", "D")
 
 _DEST_RE = re.compile(
-    r"(giao\s+den|giao\s+t[ơo]i|giao|ship|g[ửu]i)\s+(.+?)"
+    r"(giao\s+den|giao\s+t[ơo]i|giao|ship|g[ửu]i|"
+    r"v[aậ]n\s*chuy[eể]n(?:\s+den|\s+t[ơo]i)?)\s+(.+?)"
     r"(?=\s*[-,]|\s+t[ôổo]ng\b|\s+tinh\b|\s+tính\b|$)",
     re.IGNORECASE,
 )
@@ -157,7 +159,12 @@ def _normalize_dest(question: str) -> str:
 # and resists injection (prices come only from check_stock, never the order).
 _TONG_CONG_LINE = re.compile(r"(?im)^.*\bt[ôổo]?ng\s*c[ôổo]?ng\b.*$\n?")
 _DELIVERY_HINT = re.compile(r"giao|ship|g[ửu]i|delivery|v[ậa]n\s*chuy[eể]n", re.I)
-_QTY_AFTER_VERB = re.compile(r"(?:mua|đ[aặ]t|order|l[aấ]y)\s+(\d{1,3})\b", re.I)
+_QTY_AFTER_VERB = re.compile(
+    r"(?:mua|đ[aặ]t|dat|order|l[aấ]y|lay|c[aầ]n|can|mu[oố]n|muon)\s+(\d{1,3})\b", re.I)
+# Quantity stated via a classifier ("3 cái", "2 chiếc", "5 sản phẩm") — used only
+# when no purchase verb precedes a number (keeps existing "mua N" cases identical).
+_QTY_CLASSIFIER = re.compile(
+    r"\b(\d{1,3})\s*(?:c[aá]i|chi[eế]c|con|s[aả]n\s*ph[aẩ]m|pcs?)\b", re.I)
 
 
 def _obs_list(trace, tool):
@@ -169,6 +176,9 @@ def _extract_qty(question, ship_obs, unit_w):
     """Quantity = the user's stated number (authoritative); cross-check via the
     shipping weight ratio; default 1."""
     m = _QTY_AFTER_VERB.search(question)
+    if m:
+        return max(1, int(m.group(1)))
+    m = _QTY_CLASSIFIER.search(question)
     if m:
         return max(1, int(m.group(1)))
     if unit_w:
@@ -214,6 +224,31 @@ def _recompute(question, trace):
     subtotal = int(price) * qty
     discounted = subtotal * (100 - int(pct)) // 100
     return ("total", discounted + shipping)
+
+
+def _needs_ship_retry(question, trace):
+    """True when the customer asked for delivery to a named destination and the
+    item is in stock, but the agent never called calc_shipping (a sporadic miss,
+    esp. on expired-coupon orders). Without that tool observation the total would
+    silently drop the shipping fee. We re-invoke the agent once to force the call
+    rather than reconstruct the shipping table ourselves (that would be a brittle
+    lookup, not a guardrail)."""
+    if not _DEST_RE.search(question or ""):
+        return False
+    cs = _obs_list(trace, "check_stock")
+    if not cs:
+        return False
+    if next((o for o in cs if o.get("found") and o.get("in_stock")), None) is None:
+        return False  # not found / out of stock -> nothing to ship
+    return not _obs_list(trace, "calc_shipping")  # already called (cost or error) -> ok
+
+
+_FORCE_SHIP_DIRECTIVE = (
+    "\n\n[HE THONG] Don hang nay CO giao hang den dia chi khach da neu. BAT BUOC "
+    "goi calc_shipping(weight_kg = so_luong * weight_kg_moi_san_pham, destination) "
+    "cho diem den do TRUOC khi tra loi, roi cong phi ship vao tong. Tuyet doi khong "
+    "bo qua buoc nay du ma giam gia het han hay khong hop le."
+)
 
 
 def _apply_validation(answer, verdict):
@@ -299,6 +334,20 @@ def mitigate(call_next, question, config, context):
         result = {"answer": "Xin loi, he thong tam thoi chua xu ly duoc. Vui long thu lai.",
                   "status": "error", "steps": 0, "trace": [], "meta": {}}
 
+    # --- Force a missing shipping call (one extra invocation, only when needed) ---
+    # The agent occasionally skips calc_shipping on a delivery order (e.g. it bails
+    # after an expired coupon), which would drop the shipping fee from the total.
+    # Re-ask once with an explicit directive so the real shipping cost lands in the
+    # trace; keep the original result if the retry doesn't help.
+    if result.get("status") == "ok" and _needs_ship_retry(question, result.get("trace")):
+        logger.log_event("FORCE_SHIPPING", {"qid": qid})
+        try:
+            r2 = call_next(safe_q + _FORCE_SHIP_DIRECTIVE, conf)
+        except Exception:
+            r2 = None
+        if r2 and r2.get("status") == "ok" and _obs_list(r2.get("trace"), "calc_shipping"):
+            result = r2
+
     # --- Observability ---
     meta    = result.get("meta") or {}
     usage   = meta.get("usage") or {}
@@ -323,6 +372,8 @@ def mitigate(call_next, question, config, context):
     })
 
     # --- Arithmetic / grounding validation (override the model's math) ---
+    raw_answer = result.get("answer")  # pre-override (offline-eval only)
+    verdict = None
     if result.get("status") == "ok":
         verdict = _recompute(question, result.get("trace"))
         if verdict is not None:
@@ -349,5 +400,24 @@ def mitigate(call_next, question, config, context):
     if result.get("status") == "ok":
         with cache_lock:
             cache[cache_key] = result
+
+    # --- Offline-eval trace dump (env-gated; OFF for real submissions) ---
+    _dump_path = os.environ.get("OBS_TRACE_DUMP")
+    if _dump_path:
+        try:
+            import json as _json
+            rec = {
+                "qid": qid, "session": session_id, "turn": turn_index,
+                "question": question, "status": result.get("status"),
+                "raw_answer": raw_answer, "final_answer": result.get("answer"),
+                "verdict": list(verdict) if verdict else None,
+                "trace": result.get("trace"),
+                "usage": (result.get("meta") or {}).get("usage"),
+            }
+            with _DUMP_LOCK:
+                with open(_dump_path, "a", encoding="utf-8") as _fh:
+                    _fh.write(_json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
 
     return result

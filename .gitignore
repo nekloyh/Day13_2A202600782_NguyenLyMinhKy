@@ -12,6 +12,9 @@ logs/
 traces/
 *.db
 run_output.json
+run_private*.json
+*_trace.jsonl
+scratch/
 score.json
 dashboard_summary.json
 .env
