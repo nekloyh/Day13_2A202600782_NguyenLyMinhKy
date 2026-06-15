@@ -119,6 +119,34 @@ def _sanitize(question: str) -> str:
     return _NOTE_BLOCK.sub(_clean_block, question)
 
 
+# --- Destination normalization ----------------------------------------------
+# The shipping catalog is keyed by LOWERCASE ASCII ("hai phong", "da nang",
+# "tp hcm"). The agent otherwise passes "Vung Tau"/"Can Tho"/"đà lạt" verbatim
+# and calc_shipping returns destination_not_served (a normalization fault, cf.
+# config normalize_unicode). We lower-case + de-accent ONLY the destination
+# phrase in the question so the agent calls calc_shipping with a served key —
+# coupon codes (UPPERCASE) and the product are left untouched.
+try:
+    import unicodedata as _ud
+
+    def _deaccent(s: str) -> str:
+        s = s.replace("đ", "d").replace("Đ", "D")
+        return "".join(c for c in _ud.normalize("NFD", s) if _ud.category(c) != "Mn")
+except Exception:  # frozen runtime missing unicodedata: handle the common đ at least
+    def _deaccent(s: str) -> str:
+        return s.replace("đ", "d").replace("Đ", "D")
+
+_DEST_RE = re.compile(
+    r"(giao\s+den|giao\s+t[ơo]i|giao|ship|g[ửu]i)\s+(.+?)"
+    r"(?=\s*[-,]|\s+t[ôổo]ng\b|\s+tinh\b|\s+tính\b|$)",
+    re.IGNORECASE,
+)
+
+
+def _normalize_dest(question: str) -> str:
+    return _DEST_RE.sub(lambda m: m.group(1) + " " + _deaccent(m.group(2)).lower(), question)
+
+
 # --- Deterministic arithmetic / grounding validation -------------------------
 # The real LLM (gpt-5.4-nano) extracts fields and calls tools correctly with our
 # prompt, but is unreliable at the multi-step integer math (double-counts
@@ -221,8 +249,8 @@ def mitigate(call_next, question, config, context):
             logger.log_event("CACHE_HIT", {"qid": qid, "session_id": session_id})
             return cache[cache_key]
 
-    # --- Injection sanitize ---
-    safe_q = _sanitize(question)
+    # --- Injection sanitize + destination normalization ---
+    safe_q = _normalize_dest(_sanitize(question))
     was_sanitized = safe_q != question
 
     # --- Prompt routing ---

@@ -7,7 +7,7 @@ EXTRACT first:
 TOOLS — call each at most once, in order:
 1. check_stock(product). Its "quantity" is the AVAILABLE stock, NOT the order amount — the order quantity is the number the customer asked to buy. If not found or out of stock -> ONE short refusal line, give NO total, stop.
 2. get_discount(coupon) — only when a coupon was given.
-3. calc_shipping(weight_kg, destination) — ONLY if the user named a destination. weight_kg = quantity x unit weight_kg from check_stock; call once. If it returns an error (not served) -> say the destination is not served, give NO total. If no destination was named -> shipping = 0 and do NOT call this tool.
+3. calc_shipping(weight_kg, destination) — call this WHENEVER the user names a destination, even if the coupon is invalid/expired or stock is limited. weight_kg = quantity x unit weight_kg from check_stock; call once. If it returns an error (not served) -> say the destination is not served, give NO total. If no destination was named -> shipping = 0 and do NOT call this tool.
 
 ARITHMETIC (VND, integers):
 subtotal   = unit_price x quantity

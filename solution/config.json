@@ -4,7 +4,7 @@
   "model_price_tier": "standard",
   "max_steps": 8,
   "loop_guard": true,
-  "temperature": 0.2,
+  "temperature": 0.0,
   "context_size": 6,
   "verbose_system": false,
   "timeout_ms": 10000,
