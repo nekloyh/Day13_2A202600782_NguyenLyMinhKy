@@ -4,6 +4,7 @@ bin/
 __pycache__/
 *.pyc
 .venv/
+.venv312/
 venv/
 *.egg-info/
 .pytest_cache/

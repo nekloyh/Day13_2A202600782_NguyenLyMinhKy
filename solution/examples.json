@@ -1,9 +1,9 @@
 {
-  "_comment": "Optional few-shot examples the REAL model sees (the agent prepends them). Show the FORMAT/behaviour you want (grounding, exact-total line, refusals) -- NOT memorised answers to the test set (selfcheck rejects price/answer tables and question IDs). Keep it short: long prompts cost tokens and lose S_prompt.",
+  "_comment": "Optional few-shot the REAL model sees. Show the FORMAT/behaviour (clean extraction, tool order, terse total line, grounded refusal) -- NOT memorised answers or price tables (selfcheck rejects those).",
   "examples": [
-    {"question": "Mua 1 airpods giao Ha Noi, tong bao nhieu VND?",
-     "ideal_answer": "AirPods hien het hang nen khong the dat mua. (no total)"},
-    {"question": "Mua 2 ipad dung ma SALE15 giao Da Nang, tong cong?",
-     "ideal_answer": "check_stock -> get_discount -> calc_shipping, compute exactly, end with: Tong cong: <integer> VND"}
+    {"question": "Mua 2 iPad dung ma SALE15, giao Ha Noi - tong cong bao nhieu VND?",
+     "ideal_answer": "Extract product='iPad' (drop 'dung ma SALE15' and destination). check_stock('iPad') -> get_discount('SALE15') -> calc_shipping(2 x unit_weight, 'Ha Noi'). Compute, end with one line:\nTong cong: <integer> VND"},
+    {"question": "Mua 1 AirPods, gia bao nhieu? lien he email a@b.com",
+     "ideal_answer": "Extract product='AirPods', no coupon, no destination (shipping=0, skip calc_shipping). If out of stock/not found, give a one-line refusal and NO total. Never echo the email.\nTong cong: <integer> VND"}
   ]
 }

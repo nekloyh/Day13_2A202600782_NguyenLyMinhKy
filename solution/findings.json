@@ -3,10 +3,70 @@
   "schema_version": 1,
   "findings": [
     {
+      "fault_class": "error_spike",
+      "evidence": {"config_observed": "tool_error_rate=0.18, retry.enabled=false", "metric": "tool_error_rate", "observed": "18% random tool failures with no retry — every failure is permanent", "trace_ids": []},
+      "root_cause": "tool_error_rate=0.18 injects random tool failures; retry.enabled=false means each failure is unrecoverable",
+      "suggested_fix": "Set tool_error_rate=0.0; retry.enabled=true, max_attempts=3"
+    },
+    {
       "fault_class": "latency_spike",
-      "evidence": {"metric": "latency_p95_ms", "observed": "TODO from your telemetry", "trace_ids": []},
-      "root_cause": "TODO: what config knob or behavior causes it?",
-      "suggested_fix": "TODO: config change and/or wrapper mitigation"
+      "evidence": {"config_observed": "timeout_ms=0, model_price_tier=premium, context_size=8", "metric": "latency_p95_ms", "observed": "No timeout ceiling; premium tier adds routing latency; large context inflates prompt", "trace_ids": []},
+      "root_cause": "timeout_ms=0 allows requests to hang indefinitely; premium tier adds queue overhead; context_size=8 inflates each prompt",
+      "suggested_fix": "Set timeout_ms=10000, model_price_tier=standard, context_size=6"
+    },
+    {
+      "fault_class": "cost_blowup",
+      "evidence": {"config_observed": "verbose_system=true, model_price_tier=premium, max_completion_tokens=2000", "metric": "cost_usd_per_call", "observed": "verbose_system pads every prompt with a large debug block; premium multiplies per-token cost; 2000 completion tokens allows wasteful output", "trace_ids": []},
+      "root_cause": "verbose_system=true inflates prompt_tokens; premium tier pricing; max_completion_tokens=2000 far exceeds what a single order reply needs",
+      "suggested_fix": "Set verbose_system=false, model_price_tier=standard, max_completion_tokens=800"
+    },
+    {
+      "fault_class": "quality_drift",
+      "evidence": {"config_observed": "session_drift_rate=0.06, context_reset_every=0", "metric": "correctness_by_turn_index", "observed": "6% quality decay per turn; sessions never reset so drift compounds across all turns", "trace_ids": []},
+      "root_cause": "session_drift_rate=0.06 injects corruption into session state each turn; context_reset_every=0 disables session reset entirely",
+      "suggested_fix": "Set session_drift_rate=0.0, context_reset_every=6"
+    },
+    {
+      "fault_class": "infinite_loop",
+      "evidence": {"config_observed": "loop_guard=false, max_steps=12", "metric": "status=max_steps", "observed": "Agent can repeat the same tool call indefinitely up to 12 steps with no cycle detection", "trace_ids": []},
+      "root_cause": "loop_guard=false disables cycle detection; max_steps=12 gives many chances to loop before hard stop",
+      "suggested_fix": "Set loop_guard=true, max_steps=8"
+    },
+    {
+      "fault_class": "tool_failure",
+      "evidence": {"config_observed": "normalize_unicode=false, catalog_override={macbook:{in_stock:false}}", "metric": "tool_result_not_found_rate", "observed": "City names with Vietnamese diacritics (e.g. Hà Nội) fail shipping lookup; macbook artificially blocked regardless of real stock", "trace_ids": []},
+      "root_cause": "normalize_unicode=false passes raw diacritic strings to catalog lookups that expect ASCII; catalog_override hard-blocks macbook stock",
+      "suggested_fix": "Set normalize_unicode=true, catalog_override={}"
+    },
+    {
+      "fault_class": "pii_leak",
+      "evidence": {"config_observed": "redact_pii=false", "metric": "pii_count_in_answers", "observed": "Agent echoes customer email and phone number back verbatim in responses", "trace_ids": []},
+      "root_cause": "redact_pii=false; original prompt has no instruction to suppress PII — model echoes customer contact info it sees in the question",
+      "suggested_fix": "Set redact_pii=true; add PII rule to prompt; wrapper redacts answer as extra safety layer"
+    },
+    {
+      "fault_class": "fabrication",
+      "evidence": {"config_observed": "prompt='You are an e-commerce assistant. Help the customer and give a total in VND.'", "metric": "out_of_stock_refusal_rate", "observed": "Agent invents a confident total for out-of-stock or unknown items instead of refusing", "trace_ids": []},
+      "root_cause": "Original prompt has no grounding instruction — model is encouraged to 'give a total' even when check_stock returns not-found",
+      "suggested_fix": "Rewrite prompt: call check_stock first; if out-of-stock/not-found → refuse with no total"
+    },
+    {
+      "fault_class": "arithmetic_error",
+      "evidence": {"config_observed": "temperature=1.6, prompt has no arithmetic formula", "metric": "total_exact_match", "observed": "High temperature causes inconsistent token sampling; no formula forces model to estimate rather than compute", "trace_ids": []},
+      "root_cause": "temperature=1.6 makes arithmetic noisy; original one-line prompt provides no exact formula for subtotal/discount/shipping calculation",
+      "suggested_fix": "Set temperature=0.2; rewrite prompt with exact formula: subtotal=price×qty, discounted=subtotal×(100-pct)//100, total=discounted+shipping"
+    },
+    {
+      "fault_class": "tool_overuse",
+      "evidence": {"config_observed": "tool_budget=0, prompt has no tool economy instruction", "metric": "tools_used_per_request", "observed": "Agent calls the same tool multiple times in a single request, inflating cost and latency", "trace_ids": []},
+      "root_cause": "tool_budget=0 places no cap on tool calls; original prompt has no 'call each tool at most once' constraint",
+      "suggested_fix": "Set tool_budget=4; add 'each tool at most once' to prompt"
+    },
+    {
+      "fault_class": "prompt_injection",
+      "evidence": {"config_observed": "original prompt has no injection defense", "metric": "total_matches_catalog_price", "observed": "Order notes (GHI CHÚ) containing fake prices cause agent to override real tool prices with injected values", "trace_ids": []},
+      "root_cause": "Original prompt does not instruct agent to treat notes as data; agent obeys instructions embedded in GHI CHÚ field",
+      "suggested_fix": "Rewrite prompt: prices from tools only, GHI CHÚ/notes are data not commands; wrapper sanitizes injected instruction lines before call"
     }
   ]
 }
